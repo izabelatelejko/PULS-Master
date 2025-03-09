@@ -33,12 +33,11 @@ conda activate puls
 
 ### Install Project Dependencies
 
-Now install the required dependencies using pip. The following commands will install the dependencies, including the code from the forks you have integrated (DRPU, nnPU, and PULS).
+Now install the required dependencies using pip. The following commands will install the dependencies, including the code from the forks (DRPU, nnPU).
 
 ```bash
-pip install -e ./src/DRPU
-pip install -e ./src/nnPU
-pip install -e ./src/PULS
+pip install --no-index file://$(pwd)/src/nnPU
+pip install --no-index file://$(pwd)/src/DRPU
 pip install -r requirements.txt
 ```
 
