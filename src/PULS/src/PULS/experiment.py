@@ -32,9 +32,6 @@ class PULSExperiment(Experiment):
         self.label_shift_config = label_shift_config
         super().__init__(experiment_config)
 
-        # self.enhanced_experiment_config = enhanced_experiment_config
-        # self._prepare_shifted_data()
-
     def _prepare_data(self):
         self._set_seed()
 

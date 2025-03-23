@@ -1,7 +1,7 @@
 """Module for dataset classes and functions."""
 
 import numpy as np
-from typing import Dict, Optional
+from typing import Optional
 import torch
 
 from nnPU.dataset import (
@@ -10,11 +10,6 @@ from nnPU.dataset import (
     PULabeler,
     MNIST_PU,
 )
-from nnPU.dataset_configs import DatasetConfig
-from nnPU.experiment_config import ExperimentConfig
-from nnPU.loss import nnPUccLoss, nnPUssLoss, uPUccLoss, uPUssLoss
-from nnPU.run_experiment import Experiment
-
 
 # class SyntheticGaussPUDataset(PUDatasetBase):
 
@@ -114,18 +109,17 @@ class Gauss_PULS(PUDatasetBase):
 
         self.data = torch.cat(
             [
-                torch.normal(0, 1, (1000, 10)),
-                torch.normal(0.5, 1, (1000, 10)),
+                torch.normal(0, 1, (2000, 10)),
+                torch.normal(0.5, 1, (2000, 10)),
             ]
         )
         self.targets = torch.cat(
             [
-                torch.ones(1000),
-                -1 * torch.ones(1000),
+                torch.ones(2000),
+                -1 * torch.ones(2000),
             ]
         )
 
-        print("first convert to pu data")
         self._convert_to_pu_data()
 
         if shifted_prior is not None:
