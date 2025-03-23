@@ -38,6 +38,7 @@ Now install the required dependencies using pip. The following commands will ins
 ```bash
 pip install --no-index file://$(pwd)/src/nnPU
 pip install --no-index file://$(pwd)/src/DRPU
+pip install --no-index file://$(pwd)/src/PULS
 pip install -r requirements.txt
 ```
 
