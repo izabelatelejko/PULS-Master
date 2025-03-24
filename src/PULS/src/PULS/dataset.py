@@ -120,10 +120,7 @@ class Gauss_PULS(PUDatasetBase):
             ]
         )
 
-        self._convert_to_pu_data()
-
-        if shifted_prior is not None:
-            self.shift_pu_data(shifted_prior, n_samples)
+        self._convert_to_shifted_pu_data(shifted_prior, n_samples)
 
 
 class MNIST_PULS(MNIST_PU):
@@ -150,6 +147,7 @@ class MNIST_PULS(MNIST_PU):
             random_seed=random_seed,
         )
 
-        # If shifting parameters are provided, apply the shift
-        if shifted_prior is not None:
-            self.shift_pu_data(shifted_prior, n_samples)
+        self._convert_to_shifted_pu_data(shifted_prior, n_samples)
+
+    def _convert_to_pu_data(self):
+        pass
