@@ -11,7 +11,7 @@ Follow these steps to set up the environment and install all necessary dependenc
 Clone this repository and the required forks to your local machine.
 
 ```bash
-git clone https://github.com/izabelatelejko/PU-Label-Shift-Master-Thesis.git
+git clone https://github.com/izabelatelejko/PULS-Master.git
 cd PU-Label-Shift-Master-Thesis
 git clone https://github.com/izabelatelejko/nnPUss.git src/nnPU
 git clone https://github.com/izabelatelejko/DRPU.git src/DRPU

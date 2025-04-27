@@ -2,7 +2,7 @@
 
 # -*- coding: utf-8 -*-
 """
-DO MIXTURE PROPORTION ESTIMATION 
+DO MIXTURE PROPORTION ESTIMATION
 Using gradient thresholding of the $\C_S$-distance
 """
 from cvxopt import matrix, solvers, spmatrix
@@ -165,7 +165,7 @@ def wrapper(X_mixture, X_component):
 from sklearn.decomposition import PCA
 
 
-def KM2_estimate(pos, unl):
+def KM1_KM2_estimate(pos, unl):
     np.random.shuffle(pos)
     np.random.shuffle(unl)
     if unl.shape[1] > 50:

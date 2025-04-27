@@ -6,6 +6,7 @@ import numpy as np
 import pkbar
 import torch
 from torch.utils.data import DataLoader
+from torch.optim import Adam
 
 from DRPU.algorithm import priorestimator as ratio_estimator
 from DRPU.algorithm import PUsequence, to_ndarray
@@ -13,6 +14,8 @@ from DRPU.modules.Kernel_MPE import KM1_KM2_estimate
 from nnPU.dataset_configs import DatasetConfig
 from nnPU.run_experiment import Experiment, DictJsonEncoder
 from nnPU.experiment_config import ExperimentConfig
+from nnPU.model import PUModel
+from nnPU.loss import DRPUccLoss
 from PULS.models import PiEstimates
 
 if TYPE_CHECKING:
@@ -30,7 +33,16 @@ class PULSExperiment(Experiment):
         """Initialize the PULS experiment."""
         self.metrics = {}
         self.label_shift_config = label_shift_config
+
         super().__init__(experiment_config)
+        self.ratio_model = PUModel(self.n_inputs)
+        self.ratio_optimizer = Adam(
+            self.ratio_model.parameters(),
+            lr=self.experiment_config.dataset_config.learning_rate,
+            weight_decay=0.005,
+            betas=(0.9, 0.999),
+        )
+        self.ratio_train_metrics = []
 
     def _prepare_data(self):
         self._set_seed()
@@ -74,6 +86,54 @@ class PULSExperiment(Experiment):
             shuffle=False,
         )
 
+    def _train_step_ratio_estimator(self, epoch: int, kbar: pkbar.Kbar) -> None:
+        """Train the ratio estimator model."""
+        self.ratio_model.train()
+        tr_loss = 0
+
+        loss_fct = DRPUccLoss(prior=self.prior, alpha=None)
+        for batch_idx, (data, _, label) in enumerate(self.train_loader):
+            data, label = data.to(self.device), label.to(self.device)
+            self.ratio_optimizer.zero_grad()
+            output = self.ratio_model(data)
+
+            loss = loss_fct(output.view(-1), label.type(torch.float))
+            tr_loss += loss.item()
+            loss.backward()
+            self.ratio_optimizer.step()
+
+            kbar.update(batch_idx + 1, values=[("loss", loss)])
+
+        metric_values = {"tr_loss": tr_loss, "epoch": epoch}
+        self.ratio_train_metrics.append(metric_values)
+
+    def train_ratio_estimator(self) -> None:
+        """Train the density ratio estimator model."""
+        self._set_seed()
+        self.ratio_model = self.ratio_model.to(self.device)
+
+        for epoch in range(self.experiment_config.dataset_config.num_epochs):
+            kbar = pkbar.Kbar(
+                target=len(self.train_loader) + 1,
+                epoch=epoch,
+                num_epochs=self.experiment_config.dataset_config.num_epochs,
+                width=8,
+                always_stateful=False,
+            )
+            self._train_step_ratio_estimator(epoch, kbar)
+
+        kbar = pkbar.Kbar(
+            target=1,
+            epoch=epoch,
+            num_epochs=self.experiment_config.dataset_config.num_epochs,
+            width=8,
+            always_stateful=False,
+        )
+
+        with open(self.experiment_config.drpu_metrics_file, "w") as f:
+            json.dump(self.ratio_train_metrics, f, cls=DictJsonEncoder, indent=4)
+        print("Metrics saved to", self.experiment_config.drpu_metrics_file)
+
     def _estimate_test_km_priors(self) -> tuple[float, float]:
         """Estimate the prior of test set with KM1 and KM2 methods."""
         pos = self.train_set.data.clone()[self.train_set.pu_targets == 1].numpy()
@@ -84,21 +144,21 @@ class PULSExperiment(Experiment):
 
     def _estimate_test_density_ratio_prior(self) -> float:
         """Estimate the prior of test set with density ratio method."""
-        self.model.eval()
+        self.ratio_model.eval()
         with torch.no_grad():
             preds_P, preds_U = [], []
 
             # positive from training set
             for data, target, _ in self.train_loader:
                 data, target = data.to(self.device), target.to(self.device)
-                preds = self.model(data)  # .view(-1)
+                preds = self.ratio_model(data)  # .view(-1)
                 preds = preds[target == 1]
                 preds_P.append(to_ndarray(preds))  # to_ndarray(y))
 
             # unlabeled from shifted data
             for data, target, _ in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
-                preds = self.model(data)  # .view(-1)
+                preds = self.ratio_model(data)  # .view(-1)
                 preds_U.append(to_ndarray(preds))  # to_ndarray(y))
 
             preds_P = np.concatenate(preds_P)
@@ -129,9 +189,18 @@ class PULSExperiment(Experiment):
             dre=ratio_pi,
         )
 
-    def _test_TC(self, estimated_pi: float):
+    def _test_with_threshold_correction(self, estimated_pi: float, drpu: bool = False):
         """Testing with Threshold Correction method."""
         self.model.eval()
+        self.ratio_model.eval()
+
+        if drpu:
+            model = self.ratio_model
+            factor = self.prior.item()
+        else:
+            model = self.model
+            factor = 1
+
         test_loss = 0
         correct = 0
         num_pos = 0
@@ -155,12 +224,16 @@ class PULSExperiment(Experiment):
         )
 
         with torch.no_grad():
-            test_loss_func = self.experiment_config.PULoss(
-                prior=self.prior
-            )  # priors not always known
+            if drpu:
+                test_loss_func = DRPUccLoss(prior=self.prior.item(), alpha=None)
+            else:
+                test_loss_func = self.experiment_config.PULoss(
+                    prior=self.prior
+                )  # priors not always known
             for data, target, _ in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
-                output = self.model(data)
+                output = model(data)
+                output = output.view(-1) * factor
                 outputs.append(output)
                 sigmoid_output = torch.sigmoid(output)
 
@@ -209,12 +282,22 @@ class PULSExperiment(Experiment):
         self._estimate_test_pi()
         self.metrics["TC"] = {}
 
-        self.metrics["TC"]["train"] = self._test_TC(self.prior.item())
+        self.metrics["TC"]["train"] = self._test_with_threshold_correction(
+            self.prior.item()
+        )
         if self.test_pis.true:
-            self.metrics["TC"]["true"] = self._test_TC(self.test_pis.true)
-        self.metrics["TC"]["KM1"] = self._test_TC(self.test_pis.km1)
-        self.metrics["TC"]["KM2"] = self._test_TC(self.test_pis.km2)
-        self.metrics["TC"]["DRE"] = self._test_TC(self.test_pis.dre)
+            self.metrics["TC"]["true"] = self._test_with_threshold_correction(
+                self.test_pis.true
+            )
+        self.metrics["TC"]["KM1"] = self._test_with_threshold_correction(
+            self.test_pis.km1
+        )
+        self.metrics["TC"]["KM2"] = self._test_with_threshold_correction(
+            self.test_pis.km2
+        )
+        self.metrics["TC"]["DRE"] = self._test_with_threshold_correction(
+            self.test_pis.dre, drpu=True
+        )
 
         with open(self.experiment_config.metrics_file, "w") as f:
             json.dump(self.metrics, f, cls=DictJsonEncoder, indent=4)
