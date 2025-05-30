@@ -189,6 +189,13 @@ class PULSExperiment(Experiment):
             dre=ratio_pi,
         )
 
+        self.metrics["test_pis"] = {
+            "true": true_pi,
+            "KM1": KM1,
+            "KM2": KM2,
+            "DR": ratio_pi,
+        }
+
     def _test_with_threshold_correction(self, estimated_pi: float, drpu: bool = False):
         """Testing with Threshold Correction method."""
         self.model.eval()
@@ -219,7 +226,7 @@ class PULSExperiment(Experiment):
         )
 
         # assuming train PI is known
-        treshold = (self.prior.item() / (1 - self.prior.item())) * (
+        threshold = (self.prior.item() / (1 - self.prior.item())) * (
             (1 - estimated_pi) / estimated_pi
         )
 
@@ -242,7 +249,7 @@ class PULSExperiment(Experiment):
                 ).item()
 
                 pred = torch.where(
-                    sigmoid_output / (1 - sigmoid_output) < treshold,
+                    sigmoid_output / (1 - sigmoid_output) < threshold,
                     torch.tensor(-1, device=self.device),
                     torch.tensor(1, device=self.device),
                 )
@@ -272,7 +279,7 @@ class PULSExperiment(Experiment):
         metric_values.n = len(self.test_loader.dataset)
         metric_values.train_pi = self.prior.item()
         metric_values.estimated_test_pi = estimated_pi
-        metric_values.treshold = treshold
+        metric_values.threshold = threshold
         metric_values.true_test_pi = self.label_shift_config.test_prior
 
         return metric_values
@@ -280,22 +287,39 @@ class PULSExperiment(Experiment):
     def test_shifted(self) -> None:
         """Test the model on the shifted data."""
         self._estimate_test_pi()
-        self.metrics["TC"] = {}
+        self.metrics["TC"] = {"nnpu": {}, "drpu": {}}
 
-        self.metrics["TC"]["train"] = self._test_with_threshold_correction(
+        self.metrics["TC"]["nnpu"]["train"] = self._test_with_threshold_correction(
             self.prior.item()
         )
         if self.test_pis.true:
-            self.metrics["TC"]["true"] = self._test_with_threshold_correction(
+            self.metrics["TC"]["nnpu"]["true"] = self._test_with_threshold_correction(
                 self.test_pis.true
             )
-        self.metrics["TC"]["KM1"] = self._test_with_threshold_correction(
+        self.metrics["TC"]["nnpu"]["KM1"] = self._test_with_threshold_correction(
             self.test_pis.km1
         )
-        self.metrics["TC"]["KM2"] = self._test_with_threshold_correction(
+        self.metrics["TC"]["nnpu"]["KM2"] = self._test_with_threshold_correction(
             self.test_pis.km2
         )
-        self.metrics["TC"]["DRE"] = self._test_with_threshold_correction(
+        self.metrics["TC"]["nnpu"]["DR"] = self._test_with_threshold_correction(
+            self.test_pis.dre
+        )
+
+        self.metrics["TC"]["drpu"]["train"] = self._test_with_threshold_correction(
+            self.prior.item(), drpu=True
+        )
+        if self.test_pis.true:
+            self.metrics["TC"]["drpu"]["true"] = self._test_with_threshold_correction(
+                self.test_pis.dre, drpu=True
+            )
+        self.metrics["TC"]["drpu"]["KM1"] = self._test_with_threshold_correction(
+            self.test_pis.km1, drpu=True
+        )
+        self.metrics["TC"]["drpu"]["KM2"] = self._test_with_threshold_correction(
+            self.test_pis.km2, drpu=True
+        )
+        self.metrics["TC"]["drpu"]["DR"] = self._test_with_threshold_correction(
             self.test_pis.dre, drpu=True
         )
 

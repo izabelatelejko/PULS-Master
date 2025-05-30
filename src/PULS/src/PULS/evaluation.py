@@ -19,6 +19,7 @@ def get_single_TC_metrics(
 ):
     """Get combined TC metrics for the given dataset and parameters."""
     tc_results = {}
+    print(TC_METHODS)
     for method in TC_METHODS:
         tc_results[method] = {}
         for metric in METRICS:
@@ -177,7 +178,7 @@ def evaluate_shifted_pi_estimation(
         )
     for pi in train_pi:
         for new_pi in test_pi:
-            for method in ["KM1", "KM2", "DRE"]:
+            for method in PI_ESTIMATION_METHODS:
                 if single_exp:
                     pi_results_row = {
                         "pi": pi,
@@ -219,8 +220,10 @@ def evaluate_all_TC_metrics(
     mean: float,
     n: int,
     label_frequency: float,
-    pi_grid: List[float],
+    train_pi: List[float],
+    test_pi: List[float],
     convert_to_df: bool = False,
+    single_exp: bool = False,
 ):
     """Evaluate TC metrics for all PULS settings."""
 
@@ -229,8 +232,10 @@ def evaluate_all_TC_metrics(
         mean,
         n,
         label_frequency,
-        pi_grid,
+        train_pi,
+        test_pi,
         aggregate=True,
+        single_exp=single_exp,
     )
 
     if not convert_to_df:
@@ -239,8 +244,8 @@ def evaluate_all_TC_metrics(
     combined_tc_metrics_df = pd.DataFrame(
         columns=["pi", "new_pi", "method", "metric", "average_value"]
     )
-    for pi in pi_grid:
-        for new_pi in pi_grid:
+    for pi in train_pi:
+        for new_pi in test_pi:
             for method in TC_METHODS:
                 for metric in METRICS:
                     tc_metrics_row = {
