@@ -4,7 +4,7 @@ import json
 from typing import List, Optional
 import pandas as pd
 
-from PULS.const import K, RESULTS_DIR, TC_METHODS, PI_ESTIMATION_METHODS, METRICS
+from PULS.const import K, RESULTS_DIR, TC_METHODS, PI_ESTIMATION_METHODS, METRICS, MODELS
 
 
 def get_single_TC_metrics(
@@ -19,11 +19,12 @@ def get_single_TC_metrics(
 ):
     """Get combined TC metrics for the given dataset and parameters."""
     tc_results = {}
-    print(TC_METHODS)
-    for method in TC_METHODS:
-        tc_results[method] = {}
-        for metric in METRICS:
-            tc_results[method][metric] = []
+    for model in MODELS:
+        tc_results[model] = {}
+        for method in TC_METHODS:
+            tc_results[model][method] = {}
+            for metric in METRICS:
+                tc_results[model][method][metric] = []
 
     n_exp = 1 if single_exp else K
     for exp_number in range(0, n_exp):
@@ -36,16 +37,20 @@ def get_single_TC_metrics(
         with open(metrics_file_path, "r") as f:
             metrics_contents = json.load(f)
 
-        for method in TC_METHODS:
-            for metric in METRICS:
-                tc_results[method][metric].append(
-                    metrics_contents["TC"][method][metric]
-                )
+        for model in MODELS:
+            for method in TC_METHODS:
+                for metric in METRICS:
+                    tc_results[model][method][metric].append(
+                        metrics_contents["TC"][model][method][metric]
+                    )
 
     if aggregate:
-        for method in TC_METHODS:
-            for metric in METRICS:
-                tc_results[method][metric] = sum(tc_results[method][metric]) / n_exp
+        for model in MODELS:
+            for method in TC_METHODS:
+                for metric in METRICS:
+                    tc_results[model][method][metric] = sum(
+                        tc_results[model][method][metric]
+                    ) / n_exp
 
     return tc_results
 
@@ -151,7 +156,7 @@ def evaluate_shifted_pi_estimation(
         for new_pi in test_pi:
             combined_pi_results[f"{pi}"][f"{new_pi}"] = (
                 evaluate_single_shifted_pi_estimation(
-                    combined_tc_metrics[f"{pi}"][f"{new_pi}"], new_pi, single_exp
+                    combined_tc_metrics[f"{pi}"][f"{new_pi}"][MODELS[0]], new_pi, single_exp
                 )
             )
 
@@ -242,27 +247,29 @@ def evaluate_all_TC_metrics(
         return combined_tc_metrics
 
     combined_tc_metrics_df = pd.DataFrame(
-        columns=["pi", "new_pi", "method", "metric", "average_value"]
+        columns=["pi", "new_pi", "model", "method", "metric", "average_value"]
     )
     for pi in train_pi:
         for new_pi in test_pi:
-            for method in TC_METHODS:
-                for metric in METRICS:
-                    tc_metrics_row = {
-                        "pi": pi,
-                        "new_pi": new_pi,
-                        "method": method,
-                        "metric": metric,
-                        "average_value": combined_tc_metrics[f"{pi}"][f"{new_pi}"][
-                            method
-                        ][metric],
-                    }
-                    combined_tc_metrics_df = pd.concat(
-                        [
-                            combined_tc_metrics_df,
-                            pd.DataFrame(tc_metrics_row, index=[0]),
-                        ],
-                        ignore_index=True,
-                    )
+            for model in MODELS:
+                for method in TC_METHODS:
+                    for metric in METRICS:
+                        tc_metrics_row = {
+                            "pi": pi,
+                            "new_pi": new_pi,
+                            "model": model,
+                            "method": method,
+                            "metric": metric,
+                            "average_value": combined_tc_metrics[f"{pi}"][f"{new_pi}"][model][
+                                method
+                            ][metric],
+                        }
+                        combined_tc_metrics_df = pd.concat(
+                            [
+                                combined_tc_metrics_df,
+                                pd.DataFrame(tc_metrics_row, index=[0]),
+                            ],
+                            ignore_index=True,
+                        )
 
-        return combined_tc_metrics_df
+    return combined_tc_metrics_df
