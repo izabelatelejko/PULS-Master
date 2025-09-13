@@ -110,7 +110,7 @@ class Gauss_PULS(PUDatasetBase):
         self.data = torch.cat(
             [
                 torch.normal(0, 1, (2000, 10)),
-                torch.normal(0.5, 1, (2000, 10)),
+                torch.normal(0.8, 1, (2000, 10)), # change back to 0.5
             ]
         )
         self.targets = torch.cat(

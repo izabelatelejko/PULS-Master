@@ -19,12 +19,12 @@ METRICS = [
     "estimated_test_pi",
 ]
 
-class LabelShiftMethod(Enum, str):
-    """Label shift handling methods.
+# class LabelShiftMethod(Enum, str):
+#     """Label shift handling methods.
     
-    MLLS: Maximum Likelihood Label Shift
-    TC: Threshold Correction
-    """
+#     MLLS: Maximum Likelihood Label Shift
+#     TC: Threshold Correction
+#     """
 
-    MLLS = "mlls"
-    TC = "tc"
+#     MLLS = "mlls"
+#     TC = "tc"

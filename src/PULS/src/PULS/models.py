@@ -6,10 +6,14 @@ from pydantic import BaseModel
 
 class PiEstimates(BaseModel):
 
-    true: Optional[float]
-    km1: Optional[float]
-    km2: Optional[float]
-    dre: Optional[float]
+    true: Optional[float] = None
+    km1: Optional[float] = None
+    km2: Optional[float] = None
+    dre: Optional[float] = None
+    mlls_nnpu: Optional[float] = None
+    mlls_drpu: Optional[float] = None
+    n_iter_mlls_nnpu: Optional[int] = None
+    n_iter_mlls_drpu: Optional[int] = None
 
 
 class LabelShiftConfig(BaseModel):

@@ -17,7 +17,7 @@ from nnPU.run_experiment import Experiment, DictJsonEncoder
 from nnPU.experiment_config import ExperimentConfig
 from nnPU.model import PUModel
 from nnPU.loss import DRPUccLoss
-from PULS.const import LabelShiftMethod
+# from PULS.const import LabelShiftMethod
 from PULS.models import PiEstimates
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ class PULSExperiment(Experiment):
         self.label_shift_config = label_shift_config
 
         super().__init__(experiment_config)
-        self.ratio_model = PUModel(self.n_inputs)
+        self.ratio_model = PUModel(self.n_inputs, activate_output=True)
         self.ratio_optimizer = Adam(
             self.ratio_model.parameters(),
             lr=self.experiment_config.dataset_config.learning_rate,
@@ -195,19 +195,14 @@ class PULSExperiment(Experiment):
             dre=ratio_pi,
         )
 
-        self.metrics["test_pis"] = {
-            "true": true_pi,
-            "KM1": KM1,
-            "KM2": KM2,
-            "DR": ratio_pi,
-        }
     
     def _run_mlls(
         self,
         model: torch.nn.Module,
         train_prior: float,
         tol: float = 1e-3,
-        max_iter: int = 1000
+        max_iter: int = 100,
+        factor: Optional[float] = None,
     ) -> tuple[float, torch.Tensor]:
         """
         Estimate shifted test prior using Maximum Likelihood Label Shift (MLLS)
@@ -215,44 +210,48 @@ class PULSExperiment(Experiment):
         """
         new_pi = train_prior
         old_pi = 0.0
-        targets = []
+        probs = torch.Tensor([])
+        targets = torch.Tensor([])
+        n_samples = 0
 
         model.eval()
+        with torch.no_grad():
+            for data, target, _ in self.test_loader:
+                data = data.to(self.device)
+                logits = model(data)
+                if factor is not None:
+                    logits = logits * factor
+                batch_probs = torch.sigmoid(logits).view(-1).cpu()
+                probs = torch.cat((probs, batch_probs), dim=0)
+                targets = torch.cat((targets, target.view(-1).cpu()), dim=0)
+                n_samples += data.size(0)
+        
         for iteration in range(max_iter):
-            total_expected_pos = 0.0
-            total_samples = 0
-
             # E-step: compute expected posteriors for all test samples
-            with torch.no_grad():
-                for data, target, _ in self.test_loader:
-                    data = data.to(self.device)
-                    logits = model(data)
-                    probs = torch.sigmoid(logits).view(-1)
+            # Apply MLLS formula for adjusted posteriors:
+            # p'(y=1|x) = [ (π'/π) * p(y=1|x) ] /
+            #             [ (π'/π)*p(y=1|x) + ((1-π')/(1-π))*(1-p(y=1|x)) ]
+            adjusted_post_plus = (new_pi / train_prior) * probs
+            adjusted_post_minus = ((1 - new_pi) / (1 - train_prior)) * (1 - probs)
+            adjusted_post = adjusted_post_plus / (adjusted_post_plus + adjusted_post_minus)
 
-                    # Apply MLLS formula for adjusted posteriors:
-                    # p'(y=1|x) = [ (π'/π) * p(y=1|x) ] /
-                    #             [ (π'/π)*p(y=1|x) + ((1-π')/(1-π))*(1-p(y=1|x)) ]
-                    adjusted_post = (
-                        (new_pi / train_prior) * probs
-                    ) / (
-                        (new_pi / train_prior) * probs +
-                        ((1 - new_pi) / (1 - train_prior)) * (1 - probs)
-                    )
+            # denominator = nominator + ((1 - new_pi) / (1 - train_prior)) * (1 - probs)
+            # adjusted_post = nominator / denominator
 
-                    total_expected_pos += adjusted_post.sum().item()
-                    total_samples += data.size(0)
-                    targets.append(target)
+            print(f"Iteration {iteration+1}: π' = {new_pi}")
+            print(adjusted_post)
 
-            # M-step: update π' using mean expected posterior
+            # M-step: update π' using mean of adjusted posteriors
             old_pi = new_pi
-            new_pi = total_expected_pos / total_samples
+            new_pi = adjusted_post.mean().item()
+            print(f"Updated π': {new_pi}")
 
             # Check convergence
             if abs(new_pi - old_pi) < tol:
                 print(f"MLLS converged in {iteration+1} iterations.")
                 break
 
-        return new_pi, adjusted_post, targets
+        return new_pi, adjusted_post, targets, iteration + 1
 
 
     # def _scale_model(self, model: Any, factor: float) -> Any:
@@ -264,7 +263,7 @@ class PULSExperiment(Experiment):
     #     return scaled_model
 
 
-    def _test_with_threshold_correction(self, estimated_pi: Optional[float], drpu: bool = False, calculate_roc_curve: bool = False):
+    def _test_with_threshold_correction(self, estimated_pi: Optional[float] = None, drpu: bool = False, calculate_roc_curve: bool = False):
         """Testing with Threshold Correction method."""
         self.model.eval()
         self.ratio_model.eval()
@@ -282,9 +281,13 @@ class PULSExperiment(Experiment):
         # else:
 
         # assuming train PI is known
-        threshold = (self.prior.item() * (1 - estimated_pi)) / (
-            (self.prior.item() + estimated_pi - 2 * self.prior.item() * estimated_pi)
-        )
+        if estimated_pi is not None:
+            threshold = (self.prior.item() * (1 - estimated_pi)) / (
+                (self.prior.item() + estimated_pi - 2 * self.prior.item() * estimated_pi)
+            )
+        else:
+            # use default threshold 0.5 if no estimate is provided
+            threshold = 0.5
 
         test_loss = 0
         correct = 0
@@ -293,7 +296,9 @@ class PULSExperiment(Experiment):
         test_points = []
         targets = []
         preds = []
-        outputs = []
+        outputs1 = []
+        outputs2 = []
+        outputs3 = []
         y_scores = []
 
         kbar = pkbar.Kbar(
@@ -313,11 +318,16 @@ class PULSExperiment(Experiment):
                 )  # priors not always known
             for data, target, _ in self.test_loader:
                 data, target = data.to(self.device), target.to(self.device)
-                output = model(data)
-                output = output.view(-1) * factor
+                output = model(data).view(-1)
+                outputs1.append(output)
+                # output = output * factor # multiplying by factor must be here
 
-                outputs.append(output)
-                sigmoid_output = torch.sigmoid(output)
+                # outputs.append(output)
+                if drpu:
+                    sigmoid_output = output * factor
+                else:
+                    sigmoid_output = torch.sigmoid(output) #* factor
+                outputs3.append(sigmoid_output)
                 if calculate_roc_curve:
                     y_scores.append(sigmoid_output)
 
@@ -372,6 +382,29 @@ class PULSExperiment(Experiment):
                 "roc_auc": roc_auc,
             }
             return metric_values, roc_curve
+        
+        # plot 3 densities
+        import matplotlib.pyplot as plt
+        outputs1 = torch.cat(outputs1).detach().cpu().numpy()
+        # outputs2 = torch.cat(outputs2).detach().cpu().numpy()   
+        outputs3 = torch.cat(outputs3).detach().cpu().numpy()
+        plt.figure(figsize=(8,6))
+        plt.hist(outputs1, bins=50, density=True, alpha=0.5, label='Raw outputs')
+        plt.axvline(x=threshold, color='r', linestyle='--', label='Threshold')
+        plt.title(f'Output distributions with threshold ({"DRPU" if drpu else "NNPU"})')
+        plt.show()
+
+        # plt.figure(figsize=(8,6))
+        # plt.hist(outputs2, bins=50, density=True, alpha=0.5, label='Scaled outputs')
+        # plt.axvline(x=threshold, color='r', linestyle='--', label='Threshold')
+        # plt.title(f'Output distributions with threshold ({"DRPU" if drpu else "NNPU"})')
+        # plt.show()
+
+        plt.figure(figsize=(8,6))
+        plt.hist(outputs3, bins=50, density=True, alpha=0.5, label='Sigmoid outputs')
+        plt.axvline(x=threshold, color='r', linestyle='--', label='Threshold')
+        plt.title(f'Output distributions with threshold ({"DRPU" if drpu else "NNPU"})')
+        plt.show()
 
         return metric_values
     
@@ -384,7 +417,7 @@ class PULSExperiment(Experiment):
             torch.tensor(1, device=self.device),
         )
         preds = preds.detach().cpu().numpy()
-        targets = torch.cat(targets).detach().cpu().numpy() 
+        targets = targets.detach().cpu().numpy() 
         metric_values = self._calculate_metrics(targets, preds)
         metric_values.n = len(self.test_loader.dataset)
         metric_values.train_pi = self.prior.item()  
@@ -399,11 +432,11 @@ class PULSExperiment(Experiment):
         self._estimate_test_pi()
         self.metrics["TC"] = {"nnpu": {}, "drpu": {}}
         self.metrics["MLLS"] = {"nnpu": {}, "drpu": {}}
+        self.metrics["NOLS"] = {"nnpu": {}, "drpu": {}}
 
-        mlls_nnpu_pi, mlls_nnpu_preds, targets = self._run_mlls(model=self.model, train_prior=self.prior.item())
-        mlls_drpu_pi, mlls_drpu_preds, _ = self._run_mlls(model=self.ratio_model, train_prior=self.prior.item())
-        self.metrics["TC"]["nnpu"]["mlls-nnpu"] = mlls_nnpu_pi
-        self.metrics["TC"]["drpu"]["mlls-drpu"] = mlls_drpu_pi
+        self.test_pis.mlls_nnpu, mlls_nnpu_preds, targets, self.test_pis.n_iter_mlls_nnpu = self._run_mlls(model=self.model, train_prior=self.prior.item())
+        self.test_pis.mlls_drpu, mlls_drpu_preds, _, self.test_pis.n_iter_mlls_drpu = self._run_mlls(model=self.ratio_model, train_prior=self.prior.item(), factor=self.prior.item())
+        self.metrics["test_pis"] = self.test_pis.model_dump()
 
         self.metrics["TC"]["nnpu"]["train"], self.metrics["TC"]["nnpu"]["roc_curve"] = self._test_with_threshold_correction(
             self.prior.item(), calculate_roc_curve=True
@@ -422,10 +455,10 @@ class PULSExperiment(Experiment):
             self.test_pis.dre
         )
         self.metrics["TC"]["nnpu"]["mlls-nnpu"] = self._test_with_threshold_correction(
-            mlls_nnpu_pi
+            self.test_pis.mlls_nnpu
         )
         self.metrics["TC"]["nnpu"]["mlls-drpu"] = self._test_with_threshold_correction(
-            mlls_drpu_pi
+            self.test_pis.mlls_drpu
         )
 
         self.metrics["TC"]["drpu"]["train"], self.metrics["TC"]["drpu"]["roc_curve"] = self._test_with_threshold_correction(
@@ -445,18 +478,21 @@ class PULSExperiment(Experiment):
             self.test_pis.dre, drpu=True
         )
         self.metrics["TC"]["drpu"]["mlls-nnpu"] = self._test_with_threshold_correction(
-            mlls_nnpu_pi, drpu=True
+            self.test_pis.mlls_nnpu, drpu=True
         )
         self.metrics["TC"]["drpu"]["mlls-drpu"] = self._test_with_threshold_correction(
-            mlls_drpu_pi, drpu=True
+            self.test_pis.mlls_drpu, drpu=True
         )
 
         self.metrics["MLLS"]["nnpu"] = self._test_with_mlls(
-            mlls_nnpu_pi, mlls_nnpu_preds, targets, drpu=False
+            self.test_pis.mlls_nnpu, mlls_nnpu_preds, targets, drpu=False
         )
         self.metrics["MLLS"]["drpu"] = self._test_with_mlls(
-            mlls_drpu_pi, mlls_drpu_preds, targets, drpu=True
+            self.test_pis.mlls_drpu, mlls_drpu_preds, targets, drpu=True
         )
+
+        self.metrics["NOLS"]["nnpu"] = self._test_with_threshold_correction()
+        self.metrics["NOLS"]["drpu"] = self._test_with_threshold_correction(drpu=True)
 
         with open(self.experiment_config.metrics_file, "w") as f:
             json.dump(self.metrics, f, cls=DictJsonEncoder, indent=4)
