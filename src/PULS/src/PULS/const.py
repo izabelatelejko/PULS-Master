@@ -7,8 +7,8 @@ K = 10  # Number of experiments for each setting
 RESULTS_DIR = "output"
 
 MODELS = ["nnpu", "drpu"]
-TC_METHODS = ["train", "true", "KM1", "KM2", "DR"]
-PI_ESTIMATION_METHODS = ["KM1", "KM2", "DR"]
+TC_METHODS = ["train", "true", "KM1", "KM2", "DR", "mlls-nnpu", "mlls-drpu"]
+PI_ESTIMATION_METHODS = ["km1", "km2", "dre", "mlls_nnpu", "mlls_drpu"]
 METRICS = [
     "accuracy",
     "precision",
@@ -21,7 +21,7 @@ METRICS = [
 
 # class LabelShiftMethod(Enum, str):
 #     """Label shift handling methods.
-    
+
 #     MLLS: Maximum Likelihood Label Shift
 #     TC: Threshold Correction
 #     """

@@ -4,7 +4,55 @@ import json
 from typing import List, Optional
 import pandas as pd
 
-from PULS.const import K, RESULTS_DIR, TC_METHODS, PI_ESTIMATION_METHODS, METRICS, MODELS
+from PULS.const import (
+    K,
+    RESULTS_DIR,
+    TC_METHODS,
+    PI_ESTIMATION_METHODS,
+    METRICS,
+    MODELS,
+)
+
+
+def get_single_pi_estimates(
+    dataset_name: str,
+    mean: Optional[float],
+    n: int,
+    label_frequency: float,
+    train_pi: float,
+    test_pi: float,
+    aggregate: bool = False,
+    single_exp: bool = False,
+):
+    """Get combined TC metrics for the given dataset and parameters."""
+    pi_results = {}
+    for method in PI_ESTIMATION_METHODS:
+        pi_results[method] = {}
+        pi_results[method]["estimated_test_pi"] = []
+
+    n_exp = 1 if single_exp else K
+    for exp_number in range(0, n_exp):
+        metrics_file_path = f"{RESULTS_DIR}/{dataset_name}/{n}/"
+        if mean is not None:
+            metrics_file_path += f"{mean}/"
+        metrics_file_path += (
+            f"{train_pi}/{test_pi}/nnPUcc/{label_frequency}/{exp_number}/metrics.json"
+        )
+        with open(metrics_file_path, "r") as f:
+            metrics_contents = json.load(f)
+
+        for method in PI_ESTIMATION_METHODS:
+            pi_results[method]["estimated_test_pi"].append(
+                metrics_contents["test_pis"][method]
+            )
+
+    if aggregate:
+        for method in PI_ESTIMATION_METHODS:
+            pi_results[method]["estimated_test_pi"] = (
+                sum(pi_results[method]["estimated_test_pi"]) / n_exp
+            )
+
+    return pi_results
 
 
 def get_single_TC_metrics(
@@ -48,9 +96,9 @@ def get_single_TC_metrics(
         for model in MODELS:
             for method in TC_METHODS:
                 for metric in METRICS:
-                    tc_results[model][method][metric] = sum(
-                        tc_results[model][method][metric]
-                    ) / n_exp
+                    tc_results[model][method][metric] = (
+                        sum(tc_results[model][method][metric]) / n_exp
+                    )
 
     return tc_results
 
@@ -83,6 +131,36 @@ def get_combined_TC_metrics(
                 single_exp=single_exp,
             )
     return combined_tc_metrics
+
+
+def get_combined_pi_estimates(
+    dataset_name: str,
+    mean: Optional[float],
+    n: int,
+    label_frequency: float,
+    train_pi: List[float],
+    test_pi: List[float],
+    aggregate: bool = False,
+    single_exp: bool = False,
+):
+    """Get combined PI estimates for the given dataset and parameters."""
+
+    combined_pi_estimates = {}
+
+    for pi in train_pi:
+        combined_pi_estimates[f"{pi}"] = {}
+        for new_pi in test_pi:
+            combined_pi_estimates[f"{pi}"][f"{new_pi}"] = get_single_pi_estimates(
+                dataset_name,
+                mean,
+                n,
+                label_frequency,
+                pi,
+                new_pi,
+                aggregate=aggregate,
+                single_exp=single_exp,
+            )
+    return combined_pi_estimates
 
 
 def evaluate_single_shifted_pi_estimation(
@@ -139,7 +217,7 @@ def evaluate_shifted_pi_estimation(
 ):
     """Evaluate TC metrics for given PULS setting."""
 
-    combined_tc_metrics = get_combined_TC_metrics(
+    pi_estimates = get_combined_pi_estimates(
         dataset_name=dataset_name,
         mean=mean,
         n=n,
@@ -156,7 +234,9 @@ def evaluate_shifted_pi_estimation(
         for new_pi in test_pi:
             combined_pi_results[f"{pi}"][f"{new_pi}"] = (
                 evaluate_single_shifted_pi_estimation(
-                    combined_tc_metrics[f"{pi}"][f"{new_pi}"][MODELS[0]], new_pi, single_exp
+                    pi_estimates[f"{pi}"][f"{new_pi}"],
+                    new_pi,
+                    single_exp,
                 )
             )
 
@@ -188,7 +268,7 @@ def evaluate_shifted_pi_estimation(
                     pi_results_row = {
                         "pi": pi,
                         "new_pi": new_pi,
-                        "method": method,
+                        "method": method.upper(),
                         "estimated_test_pi": combined_pi_results[f"{pi}"][f"{new_pi}"][
                             method
                         ]["estimated_test_pi"],
@@ -197,7 +277,7 @@ def evaluate_shifted_pi_estimation(
                     pi_results_row = {
                         "pi": pi,
                         "new_pi": new_pi,
-                        "method": method,
+                        "method": method.upper(),
                         "mae": combined_pi_results[f"{pi}"][f"{new_pi}"][method]["mae"],
                         "std_mae": combined_pi_results[f"{pi}"][f"{new_pi}"][method][
                             "std_mae"
@@ -260,9 +340,9 @@ def evaluate_all_TC_metrics(
                             "model": model,
                             "method": method,
                             "metric": metric,
-                            "average_value": combined_tc_metrics[f"{pi}"][f"{new_pi}"][model][
-                                method
-                            ][metric],
+                            "average_value": combined_tc_metrics[f"{pi}"][f"{new_pi}"][
+                                model
+                            ][method][metric],
                         }
                         combined_tc_metrics_df = pd.concat(
                             [
