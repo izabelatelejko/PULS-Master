@@ -353,3 +353,102 @@ def evaluate_all_TC_metrics(
                         )
 
     return combined_tc_metrics_df
+
+
+def evaluate_shifted_pi_estimation_from_all_data(
+    dataset_name: str,
+    mean: Optional[float],
+    label_frequencies: List[float],
+    convert_to_df: bool = False,
+):
+    """Evaluate TC metrics for given PULS setting."""
+    pi_estimates = {}
+
+    methods_to_collect = PI_ESTIMATION_METHODS + ["true"]
+    for label_frequency in label_frequencies:
+        pi_results = {}
+        for method in methods_to_collect:
+            pi_results[method] = {}
+
+        metrics_file_path = f"{RESULTS_DIR}/{dataset_name}/all/"
+        if mean is not None:
+            metrics_file_path += f"{mean}/"
+        metrics_file_path += f"all/all/nnPUcc/{label_frequency}/0/metrics.json"
+        with open(metrics_file_path, "r") as f:
+            metrics_contents = json.load(f)
+
+        for method in methods_to_collect:
+            pi_results[method] = metrics_contents["test_pis"][method]
+
+        pi_estimates[f"{label_frequency}"] = pi_results
+
+    if not convert_to_df:
+        return pi_estimates
+
+    combined_pi_results_df = pd.DataFrame(
+        columns=["label_frequency", "method", "estimated_test_pi"]
+    )
+    for label_frequency in label_frequencies:
+        pi_results = pi_estimates[f"{label_frequency}"]
+        for method in methods_to_collect:
+            pi_results_row = {
+                "label_frequency": label_frequency,
+                "method": method,
+                "estimated_test_pi": pi_results[method],
+            }
+            combined_pi_results_df = pd.concat(
+                [combined_pi_results_df, pd.DataFrame(pi_results_row, index=[0])],
+                ignore_index=True,
+            )
+
+    return combined_pi_results_df
+
+
+def evaluate_all_TC_metrics_from_all_data(
+    dataset_name: str,
+    mean: Optional[float],
+    label_frequencies: List[float],
+    convert_to_df: bool = False,
+):
+    """Evaluate TC metrics for all PULS settings from all data."""
+
+    combined_tc_metrics = {}
+
+    for label_frequency in label_frequencies:
+        metrics_file_path = f"{RESULTS_DIR}/{dataset_name}/all/"
+        if mean is not None:
+            metrics_file_path += f"{mean}/"
+        metrics_file_path += f"all/all/nnPUcc/{label_frequency}/0/metrics.json"
+        with open(metrics_file_path, "r") as f:
+            metrics_contents = json.load(f)
+
+        combined_tc_metrics[f"{label_frequency}"] = metrics_contents["TC"]
+
+    if not convert_to_df:
+        return combined_tc_metrics
+
+    combined_tc_metrics_df = pd.DataFrame(
+        columns=["label_frequency", "model", "method", "metric", "average_value"]
+    )
+    for label_frequency in label_frequencies:
+        for model in MODELS:
+            for method in TC_METHODS:
+                for metric in METRICS:
+                    tc_metrics_row = {
+                        "label_frequency": label_frequency,
+                        "model": model,
+                        "method": method,
+                        "metric": metric,
+                        "average_value": combined_tc_metrics[f"{label_frequency}"][
+                            model
+                        ][method][metric],
+                    }
+                    combined_tc_metrics_df = pd.concat(
+                        [
+                            combined_tc_metrics_df,
+                            pd.DataFrame(tc_metrics_row, index=[0]),
+                        ],
+                        ignore_index=True,
+                    )
+
+    return combined_tc_metrics_df
